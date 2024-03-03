@@ -457,7 +457,7 @@ end
 
 local function import(package_name, version, silent)
   local ok, err = pcall(function()
-  if fs.exists(fs.combine("/packages",package_name)) then
+  if fs.exists("/packages/"..package_name.."/") then
     local response
     if version then
       response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
@@ -485,20 +485,19 @@ local function import(package_name, version, silent)
         local json = textutils.unserializeJSON(file.readAll())
         file.close()
         if json.version ~= answer.version then
-            if fs.exists(fs.combine('/packages',package_name)) == false then
-              fs.makeDir(fs.combine('/packages',package_name))
+            if fs.exists("/packages/"..package_name.."/") == false then
+              fs.makeDir("/packages/"..package_name)
             else
-              fs.delete(fs.combine('/packages',package_name))
-              fs.makeDir(fs.combine('/packages',package_name))
+              fs.delete("/packages/"..package_name.."/")
+              fs.makeDir("/packages/"..package_name)
             end
-            shell.run('cd '..fs.combine('/packages',package_name)) shell.run('wget run '..answer.install_url)
-              print("Package "..package_name.." was re-installed!")
+            shell.run('cd '.."/packages/"..package_name.."/") shell.run('wget run '..answer.install)
+            print("Package "..package_name.." was re-installed!")
         end
       end)
       if ok == false then
         error("Cannot read the package.json and reinstall dependecy! ( "..err.." )",0)
       end
-      sleep(1)
       shell.run("cd "..oldPath)
       term.clear()
       term.setCursorPos(1,1)
@@ -528,12 +527,13 @@ local function import(package_name, version, silent)
       print("Found "..package_name.." version: "..answer.version.." !")
     end
     local ok, err = pcall(function()
-      if fs.exists(fs.combine('/packages',package_name)) == false then
-        fs.makeDir(fs.combine('/packages',package_name))
+      if fs.exists("/packages/"..package_name.."/") == false then
+        fs.makeDir("/packages/"..package_name)
       else
-        fs.delete(fs.combine('/packages',package_name))
+        fs.delete("/packages/"..package_name.."/")
+        fs.makeDir("/packages/"..package_name)
       end
-      shell.run('cd '..fs.combine('/packages',package_name)) shell.run('wget run '..answer.install)
+      shell.run('cd '.."/packages/"..package_name.."/") shell.run('wget run '..answer.install)
     end)
     if ok == false then
       error("[ERR] "..err)
