@@ -1,0 +1,555 @@
+local args = {...}
+
+local function log_print(b,c)print("")local d,e=term.getCursorPos()term.setCursorPos(1,e)term.write("[ ] ")term.setTextColor(c)term.write(b)return{oldY=e,complete=function(self)term.setCursorPos(1,self.oldY)local f=term.getTextColor()term.setTextColor(colors.green)term.write("[+] ")term.setTextColor(f)end,err=function(self)local g=e;term.setCursorPos(1,self.oldY)local f=term.getTextColor()term.setTextColor(colors.red)term.write("[x] ")term.setTextColor(f)end}end
+
+-- local nfcLoading = printLogWithConfirmation("Loading NFC...",colors.white)
+-- local ok, nfc = pcall(require, ".system.nfc") if ok == false then success = false nfcLoading:err() drawErrorScreen("NFC module failed!") end                                                                                                          local function a() return os.getComputerID() end
+-- if ok ~= false then nfcLoading:complete() end
+
+
+local function checkArguments(requiredArgs)
+  local parsed_args = {}
+  for i=1,#requiredArgs do
+    if (requiredArgs[i][4] ~= true and args[i+1] == nil) or (requiredArgs[i][4] ~= true and args[i+1] == "") then
+      error("Missing argument: <"..requiredArgs[i][1].."> ( "..requiredArgs[i][2].." )",0)
+    else
+      if requiredArgs[i][3] == true then
+        local description = ""
+        for k=i+1,#args do
+        	 if args[k] then
+        	   description = description.." "..args[k]
+        	 end
+        end
+        parsed_args[requiredArgs[i][1]] = description
+      else
+        parsed_args[requiredArgs[i][1]] = args[i+1]
+      end
+    end
+  end
+  return parsed_args
+end
+
+local function getCreds()
+  local file = fs.open("/.creapack.json","r")
+  local json = textutils.unserializeJSON(file.readAll())
+  file.close()
+  return {["name"] = json.name,["token"] = json.token}
+end
+
+local function check_login()
+  if fs.exists("/.creapack.json") then
+    local creds = getCreds()
+    print("[CP-AUTH] Logined as "..creds.name)
+  else
+    error("[CP-AUTH] Unauthorized! Please login via 'creapack login' ",0)
+  end
+end
+
+
+local function addFilesToFormData(folderPath, currentPath)
+    local tmp_tbl = {}
+    local files = fs.list(folderPath)
+    for i, item in ipairs(files) do
+        local itemPath = fs.combine(folderPath, item)
+        local relativePath = fs.combine(currentPath, item)
+        if fs.isDir(itemPath) then
+            local tmp2 = addFilesToFormData(itemPath, relativePath)
+            for k,v in pairs(tmp2) do
+              tmp_tbl[k] = v
+            end
+        else
+            local f = fs.open(itemPath, "r")
+            if f then
+                tmp_tbl[relativePath] = f.readAll()
+                f.close()
+            end
+        end
+    end
+    return tmp_tbl
+end
+
+local function parsePackageName(inputString)
+    local package_name, version = inputString:match("([^@]+)@([^@]+)")
+
+    if package_name and version then
+        return package_name, version
+    else
+        return inputString, nil
+    end
+end
+
+-- Function to upload files and receive the URL of the generated zip file
+local function uploadFiles(packagename,version,folder)
+    local apiUrl = "http://creatapi.mywire.org:3000/createzip"
+    local formData = addFilesToFormData(folder.."/", folder.."/")
+    -- Make a POST request
+    local body = {
+      files = formData,
+      name = packagename,
+      version = version,
+      token = getCreds().token
+    }
+    local response = http.post(apiUrl, textutils.serializeJSON(body),{["Content-Type"]="application/json"})
+    return  true
+end
+
+local function installPackage(name, version)
+  local runningProgram = shell.getRunningProgram()
+  local package_name = name
+  local oldPath = fs.getDir(runningProgram)
+  local body = {
+    name = args.package_name
+  }
+  print("Installing "..package_name.."...")
+  local response = http.get("https://creapack.kiefe.ru/install?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
+  local answer = textutils.unserializeJSON(response.readAll()).data
+  if answer.message then
+      print("")
+      error("[ERR] "..answer.message,0)
+  else
+    print("")
+    print("Found "..package_name.." version: "..(version or "latest").." !")
+  end
+  local ok, err = pcall(function()
+    if fs.exists('/packages/'..package_name) == false then
+      fs.makeDir('/packages/'..package_name)
+    else
+      fs.delete('/packages/'..package_name)
+      fs.makeDir('/packages/'..package_name)
+    end
+    sleep(0.1)
+    shell.run('cd '..'/packages/'..package_name) shell.run('wget run '..answer.install_url)
+  end)
+  print("Installed! Cheking dependecies...")
+  print("")
+  print(" ")
+  if fs.exists('/packages/'..package_name.."/package.json") == false then
+    error("Somehow package.json is not found! :-(",0)
+  end
+  local file = fs.open('/packages/'..package_name.."/package.json","r")
+  local json = nil
+  if file then
+    json = textutils.unserializeJSON(file.readAll())
+    file.close()
+  else
+    error("Critical error when reading a package.json ( maybe file not found ... )",0)
+  end
+  if json and json.dependecies ~= textutils.empty_json_array then
+    print("Required dependecies: ")
+    for k,v in pairs(json.dependecies) do
+      print(" - "..k.." : "..v)
+    end
+    sleep(1)
+    print(" Installing them...")
+    for k,v in pairs(json.dependecies) do
+      installPackage(k,v)
+    end
+  end
+  print("Dependency "..package_name.." was installed!")
+  sleep(1)
+  shell.run("cd "..oldPath)
+  term.clear()
+  term.setCursorPos(1,1)
+end
+
+if args ~= nil and #args > 0 then
+  if args[1] == 'login' then
+    args = checkArguments({{"username"," Your username"},{"password","Your password"}})
+    local body = {
+      username = args.username,
+      password = args.password
+    }
+    local response = http.post("https://creapack.kiefe.ru/user/signin",textutils.serializeJSON(body),{["Content-Type"]="application/json"})
+    local answer = textutils.unserializeJSON(response.readAll()).data
+    if answer.message then
+        error("[ERR] "..answer.message,0)
+    end
+    local file = fs.open("/.creapack.json","w")
+    local json = {
+      token = answer.token,
+      name = args.username
+    }
+    file.write(textutils.serializeJSON(json))
+    file.close()
+    print(" | Authorized!")
+  elseif args[1] == "signout" then
+    fs.delete("/.creapack.json")
+    print(" | Signed out!")
+  elseif args[1] == 'create' then
+    check_login()
+    args = checkArguments({{"package_name","Name for a project"},{"desc","File description",true}})
+    local pr = log_print("Setting up directory",colors.white)
+    if fs.exists(args.package_name.."/") then
+    else
+      fs.makeDir(args.package_name)
+    end
+    pr:complete()
+    pr = log_print("Making packpage.json && init.lua",colors.white)
+    local ok, err = pcall(function()
+      local file = fs.open(fs.combine(args.package_name,"package.json"),"w")
+      local json = {
+        name = args.package_name,
+        desc = args.desc,
+        developer = getCreds().name,
+        version = "0.1",
+        dependecies = textutils.empty_json_array
+      }
+      file.write(textutils.serializeJSON(json))
+      file.close()
+      if fs.exists(fs.combine(args.package_name,"init.lua")) == false then
+        file = fs.open(fs.combine(args.package_name,"init.lua"),"w")
+        file.write('print("App generated by CreaPack")')
+        file.close()
+      end
+    end)
+    if ok then
+      pr:complete()
+    else
+      pr:err()
+      error("Failed to initialize project! "..err, 0)
+    end
+    print("")
+    pr = log_print("Uploading...",colors.white)
+    local body = {
+      name = args.package_name
+    }
+    local response = http.post("https://creapack.kiefe.ru/package/create",textutils.serializeJSON(body),{["Content-Type"]="application/json",["Authorization"] = getCreds().token})
+    local answer = textutils.unserializeJSON(response.readAll()).data
+    if answer.message then
+        pr:err()
+        print("")
+        error("[ERR] "..answer.message,0)
+    else
+      pr:complete()
+      print("")
+      print("Done!")
+    end
+  elseif args[1] == "dependency" then
+    args = checkArguments({{"action","Possble actions: add, remove"},{"path","Path of a project"},{"package_name","Name of dependecy package"}})
+    if args.action == "add" then
+      if fs.exists(fs.combine(args.path,"package.json")) then
+        pr = log_print("Modyfing packpage.json",colors.white)
+        local ok, err = pcall(function()
+          local file = fs.open(fs.combine(args.path,"package.json"),"r")
+          local json = textutils.unserializeJSON(file.readAll())
+          file.close()
+          local response = http.get("https://creapack.kiefe.ru/package/"..args.package_name,{["Content-Type"]="application/json"})
+          local answer = textutils.unserializeJSON(response.readAll()).data
+          if answer.message then
+              print("")
+              error("[ERR] "..answer.message,0)
+          else
+            print("")
+            print("Found "..args.package_name.." version: "..answer.version.." !")
+          end
+          local dependecies = json.dependecies
+          if dependecies == textutils.empty_json_array then
+            dependecies = {}
+          end
+          dependecies[args.package_name] = answer.version
+          json.dependecies = dependecies
+          file = fs.open(fs.combine(args.path,"package.json"),"w")
+          file.write(textutils.serializeJSON(json))
+          file.close()
+        end)
+        if ok then
+          pr:complete()
+        else
+          pr:err()
+          print("")
+          error("[ERR] Failed to modify package! ( "..err.." )", 0)
+        end
+        print("")
+        print("Added dependecy!")
+        print("Push a package to apply changes!")
+        print("")
+      else
+        error("Cant find a package.json is specified path! ",0)
+      end
+    elseif args.action == "remove" then
+      if fs.exists(fs.combine(args.path,"package.json")) then
+        pr = log_print("Modyfing packpage.json",colors.white)
+        local ok, err = pcall(function()
+            local file = fs.open(fs.combine(args.path,"package.json"),"r")
+          local json = textutils.unserializeJSON(file.readAll())
+          file.close()
+          file = fs.open(fs.combine(args.path,"package.json"),"w")
+          local dependecies = json.dependecies
+          if dependecies[args.package_name] then
+            dependecies[args.package_name] = nil
+          else
+            error("This dependecy is not present in the package.json!",0)
+          end
+          json.dependecies = dependecies
+          file.write(textutils.serializeJSON(json))
+          file.close()
+        end)
+        if ok then
+          pr:complete()
+        else
+          pr:err()
+          print("")
+          error("[ERR] Failed to modify package! ( "..err.." )", 0)
+        end
+        print("")
+        print("Removed dependecy!")
+        print("Push a package to apply changes!")
+        print("")
+      else
+        error("Cant find a package.json is specified path! ",0)
+      end
+    else
+      error(args.action.." is not a possible action! Possble actions: add, remove",0)
+    end
+  elseif args[1] == "install" then
+    args = checkArguments({{"package_name","Package name"},{"path","Path for installing",false, true}})
+    if args.path == nil then
+      args.path = "/packages/"..args.package_name.."/"
+    end
+    local runningProgram = shell.getRunningProgram()
+    local package_name, version = parsePackageName(args.package_name)
+    local oldPath = fs.getDir(runningProgram)
+    if oldPath == "" then oldPath = "/" end
+    local body = {
+      name = args.package_name
+    }
+    print("Installing "..args.package_name.."...")
+    local response
+    if version then
+      response = http.get("https://creapack.kiefe.ru/install?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
+    else
+      response = http.get("https://creapack.kiefe.ru/install?package_name="..package_name,{["Content-Type"]="application/json"})
+    end
+    local answer = textutils.unserializeJSON(response.readAll()).data
+    if answer.message then
+        print("")
+        error("[ERR] "..answer.message,0)
+    else
+      print("")
+      print("Found "..package_name.." version: "..(version or "latest").." !")
+    end
+    local ok, err = pcall(function()
+      if fs.exists(args.path) == false then
+        print("Made a directory for a package ")
+        fs.makeDir(args.path)
+      else
+        print("Deleted old package... ")
+        fs.delete(args.path)
+        fs.makeDir(args.path)
+      end
+      shell.run('cd '..args.path) shell.run('wget run '..answer.install_url)
+    end)
+    if ok == false then
+      error(err,0)
+    end
+    print("Installed! Cheking dependecies...")
+    print("")
+    print(" ")
+    if fs.exists("/"..fs.combine(args.path,"/package.json")) == false then
+      error("Somehow package.json is not found! :-(",0)
+    end
+    local file = fs.open("/"..fs.combine(args.path,"/package.json"),"r")
+    local json = nil
+    if file then
+      json = textutils.unserializeJSON(file.readAll())
+      file.close()
+    else
+      error("Critical error when reading a package.json ( maybe file not found ... )",0)
+    end
+    if json and json.dependecies ~= textutils.empty_json_array then
+      print("Required dependecies: ")
+      for k,v in pairs(json.dependecies) do
+        print(" - "..k.." : "..v)
+      end
+      sleep(1)
+      print(" Installing them...")
+      for k,v in pairs(json.dependecies) do
+        installPackage(k,v)
+      end
+    end
+    sleep(1)
+    shell.run("cd "..oldPath)
+    term.clear()
+    term.setCursorPos(1,1)
+    print("Package "..package_name.." was installed!")
+  elseif args[1] == 'push' then
+      print("")
+      print("")
+      args = checkArguments({{"directory","Project name"},{"version","Version"},{"desc","Patch notes",true}})
+      check_login()
+      local pr = log_print("Checking project",colors.white)
+      if fs.exists(fs.combine(args.directory,"package.json")) and fs.exists(fs.combine(args.directory,"init.lua")) then
+        pr:complete()
+        pr = log_print("Modyfing packpage.json",colors.white)
+        local ok, err = pcall(function()
+            local file = fs.open(fs.combine(args.directory,"package.json"),"r")
+          local json = textutils.unserializeJSON(file.readAll())
+          file.close()
+          if json.version == args.version then
+            error("Please change the version! (current: "..json.version..")", 0)
+          end
+          file = fs.open(fs.combine(args.directory,"package.json"),"w")
+          json.version = args.version
+          json.notes = args.desc
+          file.write(textutils.serializeJSON(json))
+          file.close()
+        end)
+        if ok then
+          pr:complete()
+        else
+          pr:err()
+          print("")
+          error("[ERR] Failed to modify package! ( "..err.." )", 0)
+        end
+        print("")
+        pr = log_print("Compressing package...",colors.white)
+        local ok, err = pcall(function()
+          uploadFiles(args.directory,args.version,args.directory)
+        end)
+        if ok then pr:complete() else pr:err() error("[ERR] Error when compressing! ( "..err.." )", 0) end
+        print("")
+        pr = log_print("Uploading...",colors.white)
+        sleep(1)
+        if true == false then
+          pr:err()
+          print("")
+          error(answer.message,0)
+        else
+          pr:complete()
+        end
+        print("")
+        print("Done!")
+        print("")
+      else
+        pr:err()
+        print("")
+        error(" [ERR] Can't find '"..fs.combine(args.directory,"init.lua").."' or '"..fs.combine(args.directory,"package.json").."' !",0)
+      end
+  elseif args[1] == "help" then
+    print("")
+    term.write("---------------------------------------------------------------")
+    print("")
+    print("  creapack | v0.1 | timuzkas & Kiefe")
+    print("  Help menu:")
+    print("  - `creapack login <username> <password>`` - login to creaPack")
+    print(" ")
+    print("  - `creapack signout` - signout from creaPack")
+    print(" ")
+    print("  - `creapack create <package_name> <description>` - create a new creaPack project")
+    print(" ")
+    print("  - `creapack push <project_name> <version> <Patch notes>` - push a project to creaPack")
+    print(" ")
+    print("  - `creapack install <package_name> <path>` - install package")
+    print("  - `creapack dependency <add/remove> <project_name(path)> <dependency_name>` - add a dependency to a project")
+    print(" ")
+    print("  - `creapack help` - this dialog")
+    print(" ")
+    term.write("---------------------------------------------------------------")
+  end
+else
+  print("")
+  term.write("---------------------------------------------------------------")
+  print("")
+  print("  creapack | v0.6 | timuzkas & Kiefe")
+  print("   'creapack help' to get started ")
+  term.write("---------------------------------------------------------------")
+end
+
+local function import(package_name, version, silent)
+  local ok, err = pcall(function()
+  if fs.exists(fs.combine("/packages",package_name)) then
+    local response
+    if version then
+      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
+    else
+      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name,{["Content-Type"]="application/json"})
+    end
+    local answer = textutils.unserializeJSON(response.readAll()).data
+    local test = http.get(answer.install_url)
+    local answer_second = textutils.unserializeJSON(test.readAll()).data
+    answer.install = answer_second.install_url
+    if answer.message then
+        print("")
+        term.setTextColor(colors.red)
+        print("[ERR] Can't connect to crepack! ("..answer.message..")",0)
+        print("Skipping install!")
+        term.setTextColor(colors.white)
+        sleep(2)
+    else
+
+      local runningProgram = shell.getRunningProgram()
+      local oldPath = fs.getDir(runningProgram)
+      if oldPath == "" then oldPath = "/" end
+      local ok, err = pcall(function()
+        local file = fs.open("/packages/"..package_name.."/package.json","r")
+        local json = textutils.unserializeJSON(file.readAll())
+        file.close()
+        if json.version ~= answer.version then
+            if fs.exists(fs.combine('/packages',package_name)) == false then
+              fs.makeDir(fs.combine('/packages',package_name))
+            else
+              fs.delete(fs.combine('/packages',package_name))
+              fs.makeDir(fs.combine('/packages',package_name))
+            end
+            shell.run('cd '..fs.combine('/packages',package_name)) shell.run('wget run '..answer.install_url)
+              print("Package "..package_name.." was re-installed!")
+        end
+      end)
+      if ok == false then
+        error("Cannot read the package.json and reinstall dependecy! ( "..err.." )",0)
+      end
+      sleep(1)
+      shell.run("cd "..oldPath)
+      term.clear()
+      term.setCursorPos(1,1)
+    end
+  else
+    local runningProgram = shell.getRunningProgram()
+    local oldPath = fs.getDir(runningProgram)
+    local body = {
+      name = args.package_name
+    }
+    print("Installing "..package_name.."...")
+    local response
+    if version then
+      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
+    else
+      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name,{["Content-Type"]="application/json"})
+    end
+    local answer = textutils.unserializeJSON(response.readAll()).data
+    local test = http.get(answer.install_url)
+    local answer_second = textutils.unserializeJSON(test.readAll()).data
+    answer.install = answer_second.install_url
+    if answer.message then
+        print("")
+        error("[ERR] "..answer.message,0)
+    else
+      print("")
+      print("Found "..package_name.." version: "..answer.version.." !")
+    end
+    local ok, err = pcall(function()
+      if fs.exists(fs.combine('/packages',package_name)) == false then
+        fs.makeDir(fs.combine('/packages',package_name))
+      else
+        fs.delete(fs.combine('/packages',package_name))
+      end
+      shell.run('cd '..fs.combine('/packages',package_name)) shell.run('wget run '..answer.install)
+    end)
+    if ok == false then
+      error("[ERR] "..err)
+    end
+    print("Package "..package_name.." was installed!")
+    shell.run("cd "..oldPath)
+    term.clear()
+    term.setCursorPos(1,1)
+  end
+  end)
+  if ok == false then
+    error("[CP-ERR] "..err,0)
+  elseif ok == true then
+    local tmp_api = require(".packages/"..package_name)
+    return tmp_api
+  end
+end
+
+return { import = import }
