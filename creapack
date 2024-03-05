@@ -511,34 +511,10 @@ local function import(package_name, version, silent)
     print("Installing "..package_name.."...")
     local response
     if version then
-      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name.."&version="..version,{["Content-Type"]="application/json"})
+       installPackage(package_name,version)
     else
-      response = http.get("https://creapack.kiefe.ru/check_update?package_name="..package_name,{["Content-Type"]="application/json"})
+        installPackage(package_name,"latest")
     end
-    local answer = textutils.unserializeJSON(response.readAll()).data
-    local test = http.get(answer.install_url)
-    local answer_second = textutils.unserializeJSON(test.readAll()).data
-    answer.install = answer_second.install_url
-    if answer.message then
-        print("")
-        error("[ERR] "..answer.message,0)
-    else
-      print("")
-      print("Found "..package_name.." version: "..answer.version.." !")
-    end
-    local ok, err = pcall(function()
-      if fs.exists("/packages/"..package_name.."/") == false then
-        fs.makeDir("/packages/"..package_name)
-      else
-        fs.delete("/packages/"..package_name.."/")
-        fs.makeDir("/packages/"..package_name)
-      end
-      shell.run('cd '.."/packages/"..package_name.."/") shell.run('wget run '..answer.install)
-    end)
-    if ok == false then
-      error("[ERR] "..err)
-    end
-    print("Package "..package_name.." was installed!")
     shell.run("cd "..oldPath)
     term.clear()
     term.setCursorPos(1,1)
