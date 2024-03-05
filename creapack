@@ -485,14 +485,11 @@ local function import(package_name, version, silent)
         local json = textutils.unserializeJSON(file.readAll())
         file.close()
         if json.version ~= answer.version then
-            if fs.exists("/packages/"..package_name.."/") == false then
-              fs.makeDir("/packages/"..package_name)
-            else
-              fs.delete("/packages/"..package_name.."/")
-              fs.makeDir("/packages/"..package_name)
-            end
-            shell.run('cd '.."/packages/"..package_name.."/") shell.run('wget run '..answer.install)
-            print("Package "..package_name.." was re-installed!")
+                if version then
+       installPackage(package_name,version)
+    else
+        installPackage(package_name,"latest")
+end
         end
       end)
       if ok == false then
