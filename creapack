@@ -93,6 +93,19 @@ local function uploadFiles(packagename,version,folder)
     return  true
 end
 
+local function parse_lua_string(lua_string)
+    local install_links = {}
+    local pattern = "shell%.run%('%s*wget%s+(.-)%s+(.-)%s*'%)"
+
+    for link, path in string.gmatch(lua_string, pattern) do
+        link = link:gsub("^%s*(.-)%s*$", "%1")  -- Remove leading/trailing whitespace
+        path = path:gsub("^%s*(.-)%s*$", "%1")  -- Remove leading/trailing whitespace
+        install_links[path] = link
+    end
+
+    return install_links
+end
+
 local function installPackage(name, version)
   local runningProgram = shell.getRunningProgram()
   local package_name = name
@@ -118,7 +131,15 @@ local function installPackage(name, version)
       fs.makeDir('/packages/'..package_name)
     end
     sleep(0.1)
-    shell.run('cd '..'/packages/'..package_name) shell.run('wget run '..answer.install_url)
+    response = http.get(answer.install_url)
+    local parsed_data = parse_lua_string(response.readAll())
+    for path, link in pairs(parsed_data) do
+      local file = fs.open('/packages/'..package_name.."/"..path,"w")
+      local file_data = http.get(link)
+      file.write(file_data.readAll())
+      file.close()
+      print("Installed : "..path)
+    end
   end)
   sleep(0.8)
   print("Installed! Cheking dependecies...")
@@ -147,7 +168,7 @@ local function installPackage(name, version)
     end
   end
   print("Dependency "..package_name.." was installed!")
-  sleep(1)
+  sleep(0.5)
   shell.run("cd "..oldPath)
   term.clear()
   term.setCursorPos(1,1)
@@ -338,7 +359,15 @@ if args ~= nil and #args > 0 then
         fs.delete(args.path)
         fs.makeDir(args.path)
       end
-      shell.run('cd '..args.path) shell.run('wget run '..answer.install_url)
+      response = http.get(answer.install_url)
+      local parsed_data = parse_lua_string(response.readAll())
+      for path, link in pairs(parsed_data) do
+        local file = fs.open(args.path.."/"..path,"w")
+        local file_data = http.get(link)
+        file.write(file_data.readAll())
+        file.close()
+        print("Installed : "..path)
+      end
     end)
     if ok == false then
       error(err,0)
@@ -368,11 +397,11 @@ if args ~= nil and #args > 0 then
         installPackage(k,v)
       end
     end
+    print("Package "..package_name.." was installed!")
     sleep(1)
     shell.run("cd "..oldPath)
     term.clear()
     term.setCursorPos(1,1)
-    print("Package "..package_name.." was installed!")
   elseif args[1] == 'push' then
       print("")
       print("")
